@@ -14,6 +14,11 @@ module GoodJob # :nodoc:
 
     self.table_name = 'good_job_processes'
 
+    LOCK_TYPE_ADVISORY = "advisory"
+    enum lock_type: {
+      LOCK_TYPE_ADVISORY => 1,
+    }, _prefix: :lock_type
+
     cattr_reader :mutex, default: Mutex.new
     cattr_accessor :_current_id, default: nil
     cattr_accessor :_pid, default: nil
@@ -67,7 +72,15 @@ module GoodJob # :nodoc:
 
     # Deletes all inactive process records.
     def self.cleanup
-      inactive.delete_all
+      inactive.find_each do |process|
+        GoodJob::Job.where(locked_by_id: process.id).update_all(locked_by_id: nil, locked_at: nil) if GoodJob::Job.process_lock_migrated? # rubocop:disable Rails/SkipsModelValidations
+        process.delete
+      end
+    end
+
+    # @return [Boolean]
+    def self.lock_type_migrated?
+      columns_hash["lock_type"].present?
     end
 
     # Registers the current process in the database
@@ -75,7 +88,13 @@ module GoodJob # :nodoc:
     def self.register
       mutex.synchronize do
         process_state = ns_current_state
-        create(id: process_state[:id], state: process_state, create_with_advisory_lock: true)
+        create({
+          id: process_state[:id],
+          state: process_state,
+          create_with_advisory_lock: true,
+        }.tap do |args|
+          args[:lock_type] = "advisory" if lock_type_migrated?
+        end)
       rescue ActiveRecord::RecordNotUnique
         find(ns_current_state[:id])
       end

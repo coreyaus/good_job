@@ -41,7 +41,11 @@ module GoodJob
       end
 
       def error_event_migrated?
-        return true if columns_hash["error_event"].present?
+        columns_hash["error_event"].present?
+      end
+
+      def process_lock_migrated?
+        return true if columns_hash["locked_by_id"].present?
 
         migration_pending_warning!
         false
